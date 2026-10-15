@@ -208,19 +208,29 @@ app.whenReady().then(() => {
   win.webContents.once('did-finish-load', () => {
     startScan();
     // Smoke test: UBNT_SMOKE_SCREENSHOT=<file.png> captures the window after the scan starts, then quits.
+    //   UBNT_SMOKE_SIZE=WxH       content size for the captures
+    //   UBNT_SMOKE_DELAY=ms       wait before capturing (default 4000)
+    //   UBNT_SMOKE_THEMES=a,b,... also captures <shot>-<theme>.png per theme
+    //   UBNT_SMOKE_JS=<code>      runs in the page before the final capture
     const shot = process.env.UBNT_SMOKE_SCREENSHOT;
     if (shot) {
+      const size = /^(\d+)x(\d+)$/.exec(process.env.UBNT_SMOKE_SIZE || '');
+      if (size) win.setContentSize(Number(size[1]), Number(size[2]));
       setTimeout(async () => {
-        // UBNT_SMOKE_THEMES=light,dark,... also captures <shot>-<theme>.png per theme.
         for (const theme of (process.env.UBNT_SMOKE_THEMES || '').split(',').filter(Boolean)) {
-          await win.webContents.executeJavaScript(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}`);
+          const t = JSON.stringify(theme);
+          await win.webContents.executeJavaScript(`document.documentElement.dataset.theme = ${t}; document.querySelector('#theme').value = ${t};`);
           await new Promise((r) => setTimeout(r, 300));
           fs.writeFileSync(shot.replace(/\.png$/, `-${theme}.png`), (await win.webContents.capturePage()).toPNG());
+        }
+        if (process.env.UBNT_SMOKE_JS) {
+          await win.webContents.executeJavaScript(process.env.UBNT_SMOKE_JS);
+          await new Promise((r) => setTimeout(r, 500));
         }
         fs.writeFileSync(shot, (await win.webContents.capturePage()).toPNG());
         quitting = true;
         app.quit();
-      }, 4000);
+      }, Number(process.env.UBNT_SMOKE_DELAY) || 4000);
     }
   });
 });

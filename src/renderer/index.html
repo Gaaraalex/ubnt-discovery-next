@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'">
+  <title>Ubiquiti Discovery</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="toolbar">
+    <img src="icon-64x64.png" alt="" class="logo">
+    <label class="search">
+      <span>Search:</span>
+      <input id="search" type="search" spellcheck="false" autocomplete="off">
+    </label>
+    <button id="clear-search" type="button">Clear</button>
+    <span class="spacer"></span>
+    <label class="theme-pick">
+      <span>Tema:</span>
+      <select id="theme">
+        <option value="system">Sistema</option>
+        <option value="light">Claro</option>
+        <option value="dark">Oscuro</option>
+        <option value="midnight">Medianoche</option>
+        <option value="ubiquiti">Azul Ubiquiti</option>
+        <option value="terminal">Terminal verde</option>
+        <option value="sand">Arena</option>
+        <option value="contrast">Alto contraste</option>
+      </select>
+    </label>
+    <button id="scan" type="button" class="primary">Scan</button>
+  </header>
+
+  <main>
+    <fieldset class="devices">
+      <legend>Discovered Devices</legend>
+      <div class="table-wrap" id="table-wrap">
+        <table id="devices">
+          <thead>
+            <tr>
+              <th data-col="product">Product Name</th>
+              <th data-col="ip">IP Address</th>
+              <th data-col="mac">Hardware Address</th>
+              <th data-col="hostname">System Name</th>
+              <th data-col="version">Firmware Version</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </fieldset>
+  </main>
+
+  <footer class="status">
+    <span id="help">Double-click on a row to see device details. Right-click on a row to see device actions.</span>
+    <span class="spacer"></span>
+    <span>Total: <b id="total">0</b></span>
+  </footer>
+
+  <ul id="menu" class="menu" hidden>
+    <li data-action="web">Web UI...</li>
+    <li data-action="rescue">Rescue Web UI...</li>
+    <li class="sep"></li>
+    <li data-action="details">Details...</li>
+    <li data-action="reboot">Reboot...</li>
+    <li class="sep"></li>
+    <li data-action="copy">Copy</li>
+  </ul>
+
+  <div id="tooltip" class="tooltip" hidden></div>
+
+  <div id="modal-root"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

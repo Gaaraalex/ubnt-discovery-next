@@ -1,0 +1,55 @@
+{
+  "name": "ubnt-discovery-next",
+  "productName": "Ubiquiti Discovery",
+  "version": "3.2.0",
+  "description": "Ubiquiti Discovery Utility without Java: finds Ubiquiti airOS and UniFi devices on the local network (port 10001).",
+  "main": "src/main.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/**/*.test.js\"",
+    "dist": "electron-builder --win nsis portable"
+  },
+  "dependencies": {
+    "ssh2": "^1.16.0",
+    "unix-crypt-td-js": "^1.1.4"
+  },
+  "allowScripts": {
+    "electron": true
+  },
+  "devDependencies": {
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "local.ubnt.discovery.next",
+    "productName": "Ubiquiti Discovery",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "electronLanguages": [
+      "es",
+      "es-419",
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "src/renderer/icon-256x256.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Ubiquiti Discovery",
+      "artifactName": "UbiquitiDiscovery-${version}-instalador.exe"
+    },
+    "portable": {
+      "artifactName": "UbiquitiDiscovery-${version}-portable.exe"
+    }
+  }
+}

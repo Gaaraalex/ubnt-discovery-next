@@ -1,7 +1,7 @@
 {
   "name": "ubnt-discovery-next",
   "productName": "Ubiquiti Discovery",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "Ubiquiti Discovery Utility without Java: finds Ubiquiti airOS and UniFi devices on the local network (port 10001).",
   "main": "src/main.js",
   "license": "MIT",

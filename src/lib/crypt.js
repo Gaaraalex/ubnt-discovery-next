@@ -1,7 +1,8 @@
 'use strict';
 
 // crypt(3) variants used by the device reboot challenge:
-//   "$6$..." -> SHA-512 crypt, "$1$..." -> MD5 crypt, anything else -> traditional DES crypt.
+//   "$6$..." -> SHA-512 crypt, "$5$..." -> SHA-256 crypt, "$1$..." -> MD5 crypt,
+//   anything else -> traditional DES crypt.
 // The original tool bundled its own implementations (com.OoOO.super.if / o0oO / P).
 
 const crypto = require('crypto');
@@ -54,9 +55,35 @@ function md5Crypt(password, setting, magic = '$1$') {
   return `${magic}${salt}$${enc}`;
 }
 
-function sha512Crypt(password, setting) {
+// SHA-crypt ("$5$" SHA-256 / "$6$" SHA-512): same algorithm, different
+// digest size and output byte order.
+const SHA_VARIANTS = {
+  5: {
+    hash: 'sha256',
+    size: 32,
+    order: [
+      [0, 10, 20], [21, 1, 11], [12, 22, 2], [3, 13, 23], [24, 4, 14],
+      [15, 25, 5], [6, 16, 26], [27, 7, 17], [18, 28, 8], [9, 19, 29],
+    ],
+    tail: (C) => to64((C[31] << 8) | C[30], 3),
+  },
+  6: {
+    hash: 'sha512',
+    size: 64,
+    order: [
+      [0, 21, 42], [22, 43, 1], [44, 2, 23], [3, 24, 45], [25, 46, 4], [47, 5, 26], [6, 27, 48],
+      [28, 49, 7], [50, 8, 29], [9, 30, 51], [31, 52, 10], [53, 11, 32], [12, 33, 54], [34, 55, 13],
+      [56, 14, 35], [15, 36, 57], [37, 58, 16], [59, 17, 38], [18, 39, 60], [40, 61, 19], [62, 20, 41],
+    ],
+    tail: (C) => to64(C[63], 2),
+  },
+};
+
+function shaCrypt(password, setting, id) {
+  const v = SHA_VARIANTS[id];
   const ROUNDS_DEFAULT = 5000;
-  let rest = setting.startsWith('$6$') ? setting.slice(3) : setting;
+  const magic = `$${id}$`;
+  let rest = setting.startsWith(magic) ? setting.slice(magic.length) : setting;
   let rounds = ROUNDS_DEFAULT;
   let roundsCustom = false;
   if (rest.startsWith('rounds=')) {
@@ -73,27 +100,27 @@ function sha512Crypt(password, setting) {
 
   const P = Buffer.from(password, 'utf8');
   const S = Buffer.from(salt, 'utf8');
-  const sha = () => crypto.createHash('sha512');
+  const sha = () => crypto.createHash(v.hash);
 
   const B = sha().update(P).update(S).update(P).digest();
   const a = sha().update(P).update(S);
   let pl = P.length;
-  for (; pl > 64; pl -= 64) a.update(B);
+  for (; pl > v.size; pl -= v.size) a.update(B);
   a.update(B.subarray(0, pl));
   for (let i = P.length; i > 0; i >>= 1) a.update(i & 1 ? B : P);
-  let A = a.digest();
+  const A = a.digest();
 
   const dp = sha();
   for (let i = 0; i < P.length; i++) dp.update(P);
   const DP = dp.digest();
   const Pseq = Buffer.alloc(P.length);
-  for (let i = 0; i < P.length; i++) Pseq[i] = DP[i % 64];
+  for (let i = 0; i < P.length; i++) Pseq[i] = DP[i % v.size];
 
   const ds = sha();
   for (let i = 0; i < 16 + A[0]; i++) ds.update(S);
   const DS = ds.digest();
   const Sseq = Buffer.alloc(S.length);
-  for (let i = 0; i < S.length; i++) Sseq[i] = DS[i % 64];
+  for (let i = 0; i < S.length; i++) Sseq[i] = DS[i % v.size];
 
   let C = A;
   for (let r = 0; r < rounds; r++) {
@@ -105,17 +132,15 @@ function sha512Crypt(password, setting) {
     C = c.digest();
   }
 
-  const order = [
-    [0, 21, 42], [22, 43, 1], [44, 2, 23], [3, 24, 45], [25, 46, 4], [47, 5, 26], [6, 27, 48],
-    [28, 49, 7], [50, 8, 29], [9, 30, 51], [31, 52, 10], [53, 11, 32], [12, 33, 54], [34, 55, 13],
-    [56, 14, 35], [15, 36, 57], [37, 58, 16], [59, 17, 38], [18, 39, 60], [40, 61, 19], [62, 20, 41],
-  ];
   let enc = '';
-  for (const [x, y, z] of order) enc += to64((C[x] << 16) | (C[y] << 8) | C[z], 4);
-  enc += to64(C[63], 2);
+  for (const [x, y, z] of v.order) enc += to64((C[x] << 16) | (C[y] << 8) | C[z], 4);
+  enc += v.tail(C);
 
-  return `$6$${roundsCustom ? `rounds=${rounds}$` : ''}${salt}$${enc}`;
+  return `${magic}${roundsCustom ? `rounds=${rounds}$` : ''}${salt}$${enc}`;
 }
+
+const sha256Crypt = (password, setting) => shaCrypt(password, setting, 5);
+const sha512Crypt = (password, setting) => shaCrypt(password, setting, 6);
 
 function desCrypt(password, salt) {
   return unixCryptDes(password, salt.slice(0, 2));
@@ -123,6 +148,7 @@ function desCrypt(password, salt) {
 
 function crypt(password, salt) {
   if (salt.startsWith('$6')) return sha512Crypt(password, salt);
+  if (salt.startsWith('$5')) return sha256Crypt(password, salt);
   if (salt.startsWith('$1')) return md5Crypt(password, salt);
   return desCrypt(password, salt);
 }
@@ -133,4 +159,4 @@ function challengeResponse(password, saltBytes, challengeBytes) {
   return crypto.createHash('sha256').update(crypted).update(challengeBytes).digest();
 }
 
-module.exports = { crypt, md5Crypt, sha512Crypt, desCrypt, challengeResponse };
+module.exports = { crypt, md5Crypt, sha256Crypt, sha512Crypt, desCrypt, challengeResponse };

@@ -15,6 +15,10 @@ const MAC = Buffer.from([0x24, 0xa4, 0x3c, 0xde, 0xad, 0x01]);
 const IP = (args.find((a) => !a.startsWith('--')) || '10.0.0.5').split('.').map(Number);
 const SALT = Buffer.from('$1$fakesalt');
 let challenge = null;
+// Simulated reboot: silent for a few seconds, then back with a fresh uptime.
+let bootTime = Date.now() - 123456 * 1000;
+let downUntil = 0;
+const REBOOT_DOWN_MS = 8000;
 
 // [mac last byte, ip last octet, firmware, hostname, platform, essid, wmode, uptime s]
 const DEMO_AIROS = [
@@ -76,9 +80,10 @@ function sendDemoUnifi(rinfo) {
 
 const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 sock.on('message', (msg, rinfo) => {
+  if (Date.now() < downUntil) return;
   if (msg.length === 4 && msg[0] === 1 && msg[1] === 0) {
     const uptime = Buffer.alloc(4);
-    uptime.writeUInt32BE(Math.floor(process.uptime()) + 123456);
+    uptime.writeUInt32BE(Math.floor((Date.now() - bootTime) / 1000));
     const reply = proto.buildPacket(0, [
       [proto.TLV.MAC, MAC],
       [proto.TLV.MAC_IP, Buffer.concat([MAC, Buffer.from(IP)])],
@@ -122,6 +127,10 @@ sock.on('message', (msg, rinfo) => {
     }
     const ok = challenge && tlvs[9] && tlvs[9].equals(challengeResponse('ubnt', SALT, challenge));
     console.log(ok ? 'REBOOT accepted (valid credentials)' : 'REBOOT rejected (bad credentials)');
+    if (ok) {
+      downUntil = Date.now() + REBOOT_DOWN_MS;
+      bootTime = downUntil;
+    }
   }
 });
 sock.bind(proto.PORT, () => {

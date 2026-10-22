@@ -14,15 +14,29 @@ class SshTunnel {
     this.server = null;
   }
 
-  async open({ host, scope, sshPort, username, password, remotePort, localPort }) {
+  // scope: an interface scope id, or "auto" with `scopes` (all local IPv6
+  // interfaces) so the right one is found by trying them all at once.
+  // fallbackHost (the device's IPv4 address) is tried too when in auto mode.
+  async open({ host, scope, scopes = [], fallbackHost, sshPort, username, password, remotePort, localPort }) {
     this.close();
-    const target = scope ? `${host}%${scope}` : host;
+    let target = scope ? `${host}%${scope}` : host;
+    if (scope === 'auto') {
+      const candidates = scopes.map((s) => `${host}%${s}`);
+      if (fallbackHost) candidates.push(fallbackHost);
+      target = await firstReachable(candidates, sshPort);
+      if (!target) {
+        throw Object.assign(new Error(`SSH port ${sshPort} is not reachable on ${host} through any network interface.`), { code: 'unreachable' });
+      }
+    }
+    this.target = target;
     const client = await ssh.connect({ host: target, port: sshPort, username, password });
     this.client = client;
 
+    let forwardError = null;
     const server = net.createServer((sock) => {
       client.forwardOut('127.0.0.1', sock.remotePort || 0, '127.0.0.1', remotePort, (err, stream) => {
         if (err) {
+          forwardError = err;
           sock.destroy();
           return;
         }
@@ -45,6 +59,9 @@ class SshTunnel {
     const scheme = await this.detectScheme(localPort, remotePort);
     if (!scheme) {
       this.close();
+      if (isForwardingDenied(forwardError)) {
+        throw Object.assign(new Error(`The device does not allow SSH port forwarding (${forwardError.message}).`), { code: 'forwarding-denied' });
+      }
       throw Object.assign(new Error(`La interfaz web no responde en el puerto remoto ${remotePort}.`), { code: 'noresponse' });
     }
     return `${scheme}://localhost:${localPort}`;
@@ -75,6 +92,38 @@ class SshTunnel {
   }
 }
 
+// reason 1 = SSH_OPEN_ADMINISTRATIVELY_PROHIBITED: the server forbids port
+// forwarding (OpenSSH "AllowTcpForwarding no", Dropbear -j). Reason 2 means
+// the forward was allowed but nothing listens on the remote port.
+function isForwardingDenied(err) {
+  return !!err && (err.reason === 1 || /prohibited/i.test(err.message || ''));
+}
+
+// TCP-connect to every candidate at once; resolve with the first that accepts.
+function firstReachable(hosts, port, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    let pending = hosts.length;
+    let done = false;
+    if (pending === 0) resolve(null);
+    for (const host of hosts) {
+      const sock = net.connect({ host, port, timeout: timeoutMs });
+      const fail = () => {
+        sock.destroy();
+        if (--pending === 0 && !done) resolve(null);
+      };
+      sock.once('connect', () => {
+        sock.destroy();
+        if (!done) {
+          done = true;
+          resolve(host);
+        }
+      });
+      sock.once('timeout', fail);
+      sock.once('error', fail);
+    }
+  });
+}
+
 function probe(scheme, port) {
   const mod = scheme === 'https' ? https : http;
   return new Promise((resolve) => {
@@ -90,4 +139,4 @@ function probe(scheme, port) {
   });
 }
 
-module.exports = { SshTunnel };
+module.exports = { SshTunnel, firstReachable, isForwardingDenied };

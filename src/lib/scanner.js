@@ -32,6 +32,7 @@ class Scanner extends EventEmitter {
     this.timer = null;
     this.pendingChallenges = new Map(); // mac key -> resolver
     this.routes = new Map(); // device id -> local address whose socket heard it
+    this.rebooting = new Set(); // device ids with a reboot in progress
   }
 
   async openSockets() {
@@ -136,15 +137,76 @@ class Scanner extends EventEmitter {
     }
   }
 
+  // Ask the device for its current uptime with a few discovery queries.
+  probeUptime(macKey, timeoutMs = 2000) {
+    return new Promise((resolve) => {
+      const onDevice = (d) => {
+        if (d.id !== macKey) return;
+        cleanup();
+        resolve(d.uptime);
+      };
+      const timer = setInterval(() => this.sendQuery(), 500);
+      const timeout = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, timeoutMs);
+      const cleanup = () => {
+        clearInterval(timer);
+        clearTimeout(timeout);
+        this.removeListener('device', onDevice);
+      };
+      this.on('device', onDevice);
+      this.sendQuery();
+    });
+  }
+
+  // The device does not acknowledge a reboot (a wrong password is silently
+  // ignored), so confirm it by watching discovery: it either stops answering
+  // or comes back with a smaller uptime.
+  confirmReboot(macKey, uptimeBefore, { windowMs = 15000, silenceMs = 5000 } = {}) {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      let lastReply = Date.now();
+      const onDevice = (d) => {
+        if (d.id !== macKey) return;
+        lastReply = Date.now();
+        if (uptimeBefore > 0 && d.uptime >= 0 && d.uptime < uptimeBefore) finish(true);
+      };
+      const timer = setInterval(() => {
+        if (Date.now() - lastReply >= silenceMs) finish(true);
+        else if (Date.now() - started >= windowMs) finish(false);
+        else this.sendQuery();
+      }, 1000);
+      const finish = (rebooted) => {
+        clearInterval(timer);
+        this.removeListener('device', onDevice);
+        resolve(rebooted);
+      };
+      this.on('device', onDevice);
+    });
+  }
+
   // Reboot: ask for a challenge (cmd 2), then answer with cmd 1 and
-  // SHA-256(crypt(password, salt) || challenge).
+  // SHA-256(crypt(password, salt) || challenge). Resolves to true when the
+  // device was seen restarting, false when it kept running.
   async reboot(macKey, username, password) {
+    if (this.rebooting.has(macKey)) throw new Error('A reboot request for this device is already in progress.');
+    this.rebooting.add(macKey);
+    try {
+      return await this.rebootOnce(macKey, username, password);
+    } finally {
+      this.rebooting.delete(macKey);
+    }
+  }
+
+  async rebootOnce(macKey, username, password) {
     await this.openSockets();
+    const uptimeBefore = await this.probeUptime(macKey);
     const mac = proto.macBytesFromKey(macKey);
     const challenge = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingChallenges.delete(macKey);
-        reject(new Error('El equipo no respondió a la solicitud de reinicio.'));
+        reject(new Error('The device did not answer the reboot request. Only airOS devices support reboot from Discovery; EdgeSwitch, EdgeRouter and UniFi devices must be restarted from their web UI or SSH.'));
       }, REBOOT_TIMEOUT_MS);
       this.pendingChallenges.set(macKey, (c) => {
         clearTimeout(timeout);
@@ -162,6 +224,7 @@ class Scanner extends EventEmitter {
         [proto.TLV.RESPONSE, response],
       ]),
     );
+    return this.confirmReboot(macKey, uptimeBefore);
   }
 
   close() {

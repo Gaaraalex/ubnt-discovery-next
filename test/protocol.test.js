@@ -174,3 +174,36 @@ test('airOS v1 reply stays airOS', () => {
   const pkt = v1(0, tlv(2, Buffer.concat([MAC, Buffer.from([10, 1, 1, 1])])), tlv(3, 'XW.ar934x.v6.1.7.32555.180523.1754'), tlv(12, 'N5N'));
   assert.equal(proto.parsePacket(pkt, '10.1.1.1').device.family, 'airos');
 });
+// Cross-checked against the unixcrypt package (independent implementation).
+test('sha256crypt ($5$) vectors', () => {
+  const { sha256Crypt } = require('../src/lib/crypt');
+  assert.equal(sha256Crypt('Hello world!', '$5$saltstring'), '$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5');
+  assert.equal(sha256Crypt('ubnt', '$5$abcDEF12'), '$5$abcDEF12$E0vKclNyShTwRmegpTln/w3ouSauksK0.YhB1ttbBl1');
+  assert.equal(
+    sha256Crypt('Contraseña-ñ', '$5$rounds=10000$saltstringsaltstring'),
+    '$5$rounds=10000$saltstringsaltst$ryFFBEa1r1gAVpOZuZC4DCev7PQacZsFT6z9JPvUK34',
+  );
+  assert.equal(crypt('ubnt', '$5$abcDEF12'), '$5$abcDEF12$E0vKclNyShTwRmegpTln/w3ouSauksK0.YhB1ttbBl1');
+});
+
+test('firstReachable picks the address that accepts connections', async () => {
+  const net = require('net');
+  const { firstReachable } = require('../src/lib/tunnel');
+  const server = net.createServer((s) => s.destroy());
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+  try {
+    assert.equal(await firstReachable(['127.0.0.2', '127.0.0.1'], port, 1500), '127.0.0.1');
+    assert.equal(await firstReachable(['127.0.0.2'], port, 800), null);
+  } finally {
+    server.close();
+  }
+});
+
+test('SSH forwarding refusal is told apart from a closed remote port', () => {
+  const { isForwardingDenied } = require('../src/lib/tunnel');
+  assert.equal(isForwardingDenied(Object.assign(new Error('(SSH) Channel open failure: '), { reason: 1 })), true);
+  assert.equal(isForwardingDenied(new Error('(SSH) Channel open failure: administratively prohibited')), true);
+  assert.equal(isForwardingDenied(Object.assign(new Error('(SSH) Channel open failure: '), { reason: 2 })), false);
+  assert.equal(isForwardingDenied(null), false);
+});

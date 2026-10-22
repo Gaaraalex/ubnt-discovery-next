@@ -170,8 +170,8 @@ ipcMain.handle('copy', (_e, text) => {
 
 ipcMain.handle('reboot', async (_e, { id, username, password }) => {
   try {
-    await scanner.reboot(id, username, password);
-    return { ok: true };
+    const rebooted = await scanner.reboot(id, username, password);
+    return { ok: true, rebooted };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -179,7 +179,8 @@ ipcMain.handle('reboot', async (_e, { id, username, password }) => {
 
 ipcMain.handle('tunnel-open', async (_e, params) => {
   try {
-    const url = await tunnel.open(params);
+    const scopes = params.scope === 'auto' ? ipv6Interfaces().map((i) => i.scope) : [];
+    const url = await tunnel.open({ ...params, scopes });
     shell.openExternal(url);
     return { ok: true, url };
   } catch (err) {

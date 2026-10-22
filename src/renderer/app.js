@@ -289,7 +289,10 @@ function loginForm({ advanced }) {
       el('label', {}, 'Local interface name:'), fields.scope,
     ];
     discovery.interfaces().then((list) => {
-      fields.scope.replaceChildren(...list.map((i) => el('option', { value: i.scope }, i.name)));
+      fields.scope.replaceChildren(
+        el('option', { value: 'auto' }, 'Automatic (try all)'),
+        ...list.map((i) => el('option', { value: i.scope }, i.name)),
+      );
     });
     const setAdv = () => adv.forEach((n) => { n.hidden = !toggle.checked; });
     toggle.addEventListener('change', setAdv);
@@ -309,24 +312,33 @@ function showReboot(d) {
     body: [el('p', {}, el('b', {}, 'Reboot Credentials')), form, status],
     buttons: [ok, el('button', { type: 'button', onclick: () => m.close() }, 'Cancel')],
   });
+  let busy = false;
   const submit = async () => {
-    if (!fields.user.value || !fields.pass.value) return;
+    if (busy || !fields.user.value || !fields.pass.value) return;
+    busy = true;
     ok.disabled = true;
     status.className = '';
-    status.textContent = 'Sending reboot command...';
+    status.textContent = 'Sending reboot command and waiting for the device to restart...';
     const res = await discovery.reboot({ id: d.id, username: fields.user.value, password: fields.pass.value });
-    if (res.ok) {
+    busy = false;
+    if (res.ok && res.rebooted) {
       status.className = 'ok';
-      status.textContent = 'Reboot command sent.';
-      setTimeout(() => m.close(), 1200);
+      status.textContent = 'The device is restarting.';
+      setTimeout(() => m.close(), 1800);
     } else {
       status.className = 'error';
-      status.textContent = res.error;
+      status.textContent = res.ok ? 'The device did not restart. Check the username and password.' : res.error;
       ok.disabled = false;
     }
   };
   ok.addEventListener('click', submit);
-  m.dialog.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  // Enter is handled here; keep it from also "clicking" a focused button.
+  m.dialog.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submit();
+    }
+  });
 }
 
 const TUNNEL_ERRORS = {
@@ -335,6 +347,9 @@ const TUNNEL_ERRORS = {
   connection: (d, p) => `Failed to connect to ${d.rescueIp} on port ${p.sshPort}.`,
   port: (_d, p) => `Failed to bind local port ${p.localPort}.`,
   noresponse: (_d, p) => `Web UI is not responding on remote port ${p.remotePort}.`,
+  'forwarding-denied': () => 'The device accepted the SSH login but does not allow port forwarding, so the web UI cannot be tunneled. Open the web UI directly instead.',
+  unreachable: (d, p) =>
+    `Could not reach SSH (port ${p.sshPort}) on ${d.rescueIp} or ${d.ip}. Check that SSH is enabled on the device and, for IPv6 rescue, that IPv6 is enabled too.`,
 };
 
 function showRescue(d) {
@@ -353,11 +368,14 @@ function showRescue(d) {
     ],
     buttons: [ok, el('button', { type: 'button', onclick: () => m.close() }, 'Cancel')],
   });
+  let busy = false;
   const submit = async () => {
-    if (!fields.user.value || !fields.pass.value) return;
+    if (busy || !fields.user.value || !fields.pass.value) return;
+    busy = true;
     const params = {
       host: d.rescueIp,
-      scope: fields.scope.value,
+      scope: fields.scope.value || 'auto',
+      fallbackHost: d.ip,
       sshPort: Number(fields.sshPort.value) || 22,
       remotePort: Number(fields.remotePort.value) || 443,
       localPort: Number(fields.localPort.value) || 17114,
@@ -368,6 +386,7 @@ function showRescue(d) {
     status.className = '';
     status.textContent = `Connecting to ${d.rescueIp}...`;
     const res = await discovery.openTunnel(params);
+    busy = false;
     if (!res.ok) {
       status.className = 'error';
       status.textContent = (TUNNEL_ERRORS[res.code] || (() => `Failed to forward Web UI. ${res.error}`))(d, params);
@@ -378,7 +397,12 @@ function showRescue(d) {
     showTunnel(res.url);
   };
   ok.addEventListener('click', submit);
-  m.dialog.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  m.dialog.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submit();
+    }
+  });
 }
 
 function showTunnel(url) {

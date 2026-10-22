@@ -32,9 +32,14 @@ class SshTunnel {
     const client = await ssh.connect({ host: target, port: sshPort, username, password });
     this.client = client;
 
+    // Where the device should send the forwarded traffic. airOS serves its web
+    // UI on 127.0.0.1 (what the original used); EdgeSwitch and others only on
+    // their management IP, so that is tried next.
+    const destinations = ['127.0.0.1', fallbackHost].filter(Boolean);
+    let destIndex = 0;
     let forwardError = null;
     const server = net.createServer((sock) => {
-      client.forwardOut('127.0.0.1', sock.remotePort || 0, '127.0.0.1', remotePort, (err, stream) => {
+      client.forwardOut('127.0.0.1', sock.remotePort || 0, destinations[destIndex], remotePort, (err, stream) => {
         if (err) {
           forwardError = err;
           sock.destroy();
@@ -56,7 +61,12 @@ class SshTunnel {
     }
     this.server = server;
 
-    const scheme = await this.detectScheme(localPort, remotePort);
+    let scheme = await this.detectScheme(localPort, remotePort);
+    while (!scheme && !isForwardingDenied(forwardError) && destIndex < destinations.length - 1) {
+      destIndex++;
+      forwardError = null;
+      scheme = await this.detectScheme(localPort, remotePort);
+    }
     if (!scheme) {
       this.close();
       if (isForwardingDenied(forwardError)) {
